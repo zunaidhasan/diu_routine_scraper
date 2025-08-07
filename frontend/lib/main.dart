@@ -34,12 +34,16 @@ class _RoutineHomePageState extends State<RoutineHomePage> {
   List<dynamic> routine = [];
   bool isLoading = false;
 
+  final String apiBase = 'https://diu-routine-scraper.onrender.com'; // ✅ Render API
+
   Future<void> fetchRoutine(String batchCode) async {
     setState(() {
       isLoading = true;
       routine = [];
     });
-    final response = await http.get(Uri.parse('http://localhost:5000/routine/$batchCode'));
+
+    final response = await http.get(Uri.parse('$apiBase/routine/$batchCode'));
+
     if (response.statusCode == 200) {
       setState(() {
         routine = json.decode(response.body);
@@ -49,42 +53,59 @@ class _RoutineHomePageState extends State<RoutineHomePage> {
         SnackBar(content: Text('No routine found for batch $batchCode')),
       );
     }
+
     setState(() {
       isLoading = false;
     });
   }
 
   Future<void> uploadRoutineFile() async {
-    FilePickerResult? result = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['xlsx', 'csv']);
+    FilePickerResult? result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['xlsx', 'csv'],
+    );
+
     if (result != null && result.files.single.path != null) {
-      var request = http.MultipartRequest('POST', Uri.parse('http://localhost:5000/upload'));
+      var request = http.MultipartRequest('POST', Uri.parse('$apiBase/upload'));
       request.files.add(await http.MultipartFile.fromPath('file', result.files.single.path!));
+
       var response = await request.send();
+
       if (response.statusCode == 200) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Routine uploaded successfully.')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Routine uploaded successfully.')),
+        );
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Upload failed.')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Upload failed.')),
+        );
       }
     }
   }
 
   void downloadPDF() async {
     final pdf = pw.Document();
-    pdf.addPage(pw.Page(build: (pw.Context context) {
-      return pw.Column(
-        crossAxisAlignment: pw.CrossAxisAlignment.start,
-        children: [
-          pw.Text('DIU Routine', style: pw.TextStyle(fontSize: 24)),
-          pw.SizedBox(height: 16),
-          pw.Table.fromTextArray(
-            headers: ['Day', 'Time', 'Course', 'Room', 'Teacher'],
-            data: routine.map((item) => [
-              item['day'], item['time'], item['course'], item['room'], item['teacher']
-            ]).toList(),
-          ),
-        ],
-      );
-    }));
+
+    pdf.addPage(
+      pw.Page(
+        build: (pw.Context context) {
+          return pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.start,
+            children: [
+              pw.Text('DIU Routine', style: pw.TextStyle(fontSize: 24)),
+              pw.SizedBox(height: 16),
+              pw.Table.fromTextArray(
+                headers: ['Day', 'Time', 'Course', 'Room', 'Teacher'],
+                data: routine.map((item) => [
+                  item['day'], item['time'], item['course'], item['room'], item['teacher']
+                ]).toList(),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+
     await Printing.layoutPdf(onLayout: (format) => pdf.save());
   }
 
@@ -138,7 +159,8 @@ class _RoutineHomePageState extends State<RoutineHomePage> {
                               elevation: 2,
                               child: ListTile(
                                 title: Text('${entry['course']} (${entry['section']})'),
-                                subtitle: Text('${entry['day']} | ${entry['time']}\\nRoom: ${entry['room']} | Teacher: ${entry['teacher']}'),
+                                subtitle: Text(
+                                    '${entry['day']} | ${entry['time']}\nRoom: ${entry['room']} | Teacher: ${entry['teacher']}'),
                                 isThreeLine: true,
                               ),
                             );
