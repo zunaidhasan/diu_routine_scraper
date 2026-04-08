@@ -47,7 +47,7 @@ class _RoutineHomePageState extends State<RoutineHomePage> {
   bool isLoading = false;
   String? lastQuery;
 
-  final String apiBase = 'https://diu-routine-scraper.onrender.com';
+  final String apiBase = 'https://diu-routine-scraper-1.onrender.com';
 
   Future<void> fetchRoutine(String batchCode) async {
     if (batchCode.isEmpty) return;
