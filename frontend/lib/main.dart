@@ -1,86 +1,128 @@
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:printing/printing.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:file_picker/file_picker.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
 
 void main() {
-  runApp(DIURoutineScraperApp());
+  runApp(const DIURoutineScraperApp());
 }
 
 class DIURoutineScraperApp extends StatelessWidget {
+  const DIURoutineScraperApp({super.key});
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'DIU Routine Scraper',
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
         useMaterial3: true,
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFF6366F1),
+          brightness: Brightness.dark,
+          surface: const Color(0xFF0F172A),
+        ),
+        textTheme: GoogleFonts.interTextTheme(ThemeData.dark().textTheme),
       ),
-      home: RoutineHomePage(),
+      home: const RoutineHomePage(),
     );
   }
 }
 
 class RoutineHomePage extends StatefulWidget {
+  const RoutineHomePage({super.key});
+
   @override
-  _RoutineHomePageState createState() => _RoutineHomePageState();
+  State<RoutineHomePage> createState() => _RoutineHomePageState();
 }
 
 class _RoutineHomePageState extends State<RoutineHomePage> {
   final TextEditingController _controller = TextEditingController();
   List<dynamic> routine = [];
   bool isLoading = false;
+  String? lastQuery;
 
-  final String apiBase = 'https://diu-routine-scraper.onrender.com'; // ✅ Render API
+  final String apiBase = 'https://diu-routine-scraper.onrender.com';
 
   Future<void> fetchRoutine(String batchCode) async {
+    if (batchCode.isEmpty) return;
+    
     setState(() {
       isLoading = true;
       routine = [];
+      lastQuery = batchCode;
     });
 
-    final response = await http.get(Uri.parse('$apiBase/routine/$batchCode'));
+    try {
+      final response = await http.get(Uri.parse('$apiBase/routine/$batchCode'));
 
-    if (response.statusCode == 200) {
+      if (response.statusCode == 200) {
+        setState(() {
+          routine = json.decode(response.body);
+        });
+      } else {
+        final msg = json.decode(response.body)['message'] ?? 'No routine found';
+        _showSnackBar(msg, isError: true);
+      }
+    } catch (e) {
+      _showSnackBar('Connection error: Make sure the server is live.', isError: true);
+    } finally {
       setState(() {
-        routine = json.decode(response.body);
+        isLoading = false;
       });
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('No routine found for batch $batchCode')),
-      );
     }
-
-    setState(() {
-      isLoading = false;
-    });
   }
 
   Future<void> uploadRoutineFile() async {
     FilePickerResult? result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['xlsx', 'csv'],
+      withData: true, // Crucial for Web
     );
 
-    if (result != null && result.files.single.path != null) {
-      var request = http.MultipartRequest('POST', Uri.parse('$apiBase/upload'));
-      request.files.add(await http.MultipartFile.fromPath('file', result.files.single.path!));
-
-      var response = await request.send();
-
-      if (response.statusCode == 200) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Routine uploaded successfully.')),
+    if (result != null) {
+      setState(() => isLoading = true);
+      try {
+        var request = http.MultipartRequest('POST', Uri.parse('$apiBase/upload'));
+        
+        final fileHeader = http.MultipartFile.fromBytes(
+          'file',
+          result.files.single.bytes!,
+          filename: result.files.single.name,
         );
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Upload failed.')),
-        );
+        
+        request.files.add(fileHeader);
+
+        var streamedResponse = await request.send();
+        var response = await http.Response.fromStream(streamedResponse);
+
+        if (response.statusCode == 200) {
+          _showSnackBar('Routine updated successfully!');
+        } else {
+          _showSnackBar('Upload failed: ${json.decode(response.body)['error']}', isError: true);
+        }
+      } catch (e) {
+        _showSnackBar('Upload error: $e', isError: true);
+      } finally {
+        setState(() => isLoading = false);
       }
     }
+  }
+
+  void _showSnackBar(String message, {bool isError = false}) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: isError ? Colors.redAccent : Colors.greenAccent.withOpacity(0.8),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+    );
   }
 
   void downloadPDF() async {
@@ -92,12 +134,27 @@ class _RoutineHomePageState extends State<RoutineHomePage> {
           return pw.Column(
             crossAxisAlignment: pw.CrossAxisAlignment.start,
             children: [
-              pw.Text('DIU Routine', style: pw.TextStyle(fontSize: 24)),
-              pw.SizedBox(height: 16),
+              pw.Header(
+                level: 0,
+                child: pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Text('DIU Routine - $lastQuery', style: pw.TextStyle(fontSize: 24, fontWeight: pw.FontWeight.bold)),
+                    pw.Text('Generated by DIU Scraper', style: const pw.TextStyle(fontSize: 10)),
+                  ],
+                ),
+              ),
+              pw.SizedBox(height: 20),
               pw.Table.fromTextArray(
+                headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+                headerDecoration: const pw.BoxDecoration(color: pw.PdfColors.grey300),
                 headers: ['Day', 'Time', 'Course', 'Room', 'Teacher'],
                 data: routine.map((item) => [
-                  item['day'], item['time'], item['course'], item['room'], item['teacher']
+                  item['day'] ?? '', 
+                  item['time'] ?? '', 
+                  item['course'] ?? '', 
+                  item['room'] ?? '', 
+                  item['teacher'] ?? ''
                 ]).toList(),
               ),
             ],
@@ -112,63 +169,232 @@ class _RoutineHomePageState extends State<RoutineHomePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('DIU Routine Scraper'), centerTitle: true),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(children: [
-          TextField(
-            controller: _controller,
-            decoration: InputDecoration(
-              labelText: 'Enter Batch Code (e.g., 67_C)',
-              border: OutlineInputBorder(),
-              suffixIcon: IconButton(
-                icon: Icon(Icons.search),
-                onPressed: () => fetchRoutine(_controller.text.trim()),
-              ),
-            ),
-            onSubmitted: (value) => fetchRoutine(value.trim()),
-          ),
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              ElevatedButton.icon(
-                icon: Icon(Icons.upload_file),
-                label: Text('Upload Routine PDF/Excel'),
-                onPressed: uploadRoutineFile,
-              ),
-              const SizedBox(width: 10),
-              if (routine.isNotEmpty)
-                ElevatedButton.icon(
-                  icon: Icon(Icons.picture_as_pdf),
-                  label: Text('Download PDF'),
-                  onPressed: downloadPDF,
-                ),
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              Theme.of(context).colorScheme.surface,
+              const Color(0xFF1E293B),
             ],
           ),
-          const SizedBox(height: 20),
-          isLoading
-              ? CircularProgressIndicator()
-              : Expanded(
-                  child: routine.isEmpty
-                      ? Center(child: Text('No routine loaded.'))
-                      : ListView.builder(
-                          itemCount: routine.length,
-                          itemBuilder: (context, index) {
-                            final entry = routine[index];
-                            return Card(
-                              elevation: 2,
-                              child: ListTile(
-                                title: Text('${entry['course']} (${entry['section']})'),
-                                subtitle: Text(
-                                    '${entry['day']} | ${entry['time']}\nRoom: ${entry['room']} | Teacher: ${entry['teacher']}'),
-                                isThreeLine: true,
-                              ),
-                            );
-                          },
-                        ),
-                ),
-        ]),
+        ),
+        child: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _buildHeader(),
+                const SizedBox(height: 32),
+                _buildSearchBar(),
+                const SizedBox(height: 24),
+                _buildActionButtons(),
+                const SizedBox(height: 32),
+                Expanded(child: _buildRoutineList()),
+              ],
+            ),
+          ),
+        ),
       ),
+    );
+  }
+
+  Widget _buildHeader() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Student Routine',
+          style: GoogleFonts.inter(
+            fontSize: 32,
+            fontWeight: FontWeight.bold,
+            color: Colors.white,
+          ),
+        ),
+        Text(
+          'Daffodil International University',
+          style: GoogleFonts.inter(
+            fontSize: 16,
+            color: Colors.white60,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSearchBar() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white.withOpacity(0.1)),
+      ),
+      child: TextField(
+        controller: _controller,
+        style: const TextStyle(color: Colors.white),
+        decoration: InputDecoration(
+          hintText: 'Enter Batch/Section (e.g., 67_C)',
+          hintStyle: const TextStyle(color: Colors.white30),
+          prefixIcon: const Icon(Icons.search, color: Colors.white30),
+          border: InputBorder.none,
+          contentPadding: const EdgeInsets.all(20),
+          suffixIcon: IconButton(
+            icon: const Icon(Icons.arrow_forward, color: Color(0xFF6366F1)),
+            onPressed: () => fetchRoutine(_controller.text.trim()),
+          ),
+        ),
+        onSubmitted: (value) => fetchRoutine(value.trim()),
+      ),
+    );
+  }
+
+  Widget _buildActionButtons() {
+    return Row(
+      children: [
+        Expanded(
+          child: _actionButton(
+            icon: Icons.upload_file,
+            label: 'Update Data',
+            onTap: uploadRoutineFile,
+            color: Colors.white.withOpacity(0.05),
+          ),
+        ),
+        const SizedBox(width: 16),
+        if (routine.isNotEmpty)
+          Expanded(
+            child: _actionButton(
+              icon: Icons.picture_as_pdf,
+              label: 'Export PDF',
+              onTap: downloadPDF,
+              color: const Color(0xFF6366F1).withOpacity(0.2),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _actionButton({required IconData icon, required String label, required VoidCallback onTap, required Color color}) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+        decoration: BoxDecoration(
+          color: color,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.white.withOpacity(0.1)),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, size: 20, color: Colors.white),
+            const SizedBox(width: 8),
+            Text(label, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRoutineList() {
+    if (isLoading) {
+      return const Center(child: CircularProgressIndicator(color: Color(0xFF6366F1)));
+    }
+
+    if (routine.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.calendar_today_outlined, size: 64, color: Colors.white.withOpacity(0.1)),
+            const SizedBox(height: 16),
+            Text(
+              lastQuery == null ? 'Search for your batch routine' : 'No records found for "$lastQuery"',
+              style: const TextStyle(color: Colors.white30),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return AnimationLimiter(
+      child: ListView.builder(
+        itemCount: routine.length,
+        itemBuilder: (context, index) {
+          final entry = routine[index];
+          return AnimationConfiguration.staggeredList(
+            position: index,
+            duration: const Duration(milliseconds: 375),
+            child: SlideAnimation(
+              verticalOffset: 50.0,
+              child: FadeInAnimation(
+                child: Container(
+                  margin: const EdgeInsets.only(bottom: 16),
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.03),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: Colors.white.withOpacity(0.05)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Expanded(
+                            child: Text(
+                              entry['course']?.toString().toUpperCase() ?? 'UNKNOWN COURSE',
+                              style: const TextStyle(
+                                color: Color(0xFF818CF8),
+                                fontWeight: FontWeight.bold,
+                                fontSize: 18,
+                              ),
+                            ),
+                          ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF6366F1).withOpacity(0.2),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Text(
+                              entry['day']?.toString() ?? '',
+                              style: const TextStyle(color: Color(0xFF818CF8), fontSize: 12),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      _infoRow(Icons.access_time, entry['time']?.toString() ?? ''),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Expanded(child: _infoRow(Icons.room_outlined, 'Room: ${entry['room']}')),
+                          Expanded(child: _infoRow(Icons.person_outline, 'Teacher: ${entry['teacher']}')),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _infoRow(IconData icon, String text) {
+    return Row(
+      children: [
+        Icon(icon, size: 16, color: Colors.white30),
+        const SizedBox(width: 8),
+        Text(text, style: const TextStyle(color: Colors.white70, fontSize: 14)),
+      ],
     );
   }
 }
